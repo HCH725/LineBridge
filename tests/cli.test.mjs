@@ -149,9 +149,11 @@ test('real HTTP redirects and deadlines are bounded with no second send',async t
   assert.equal(attempts,1);assert.ok(sends<=1);
 });
 test('executable usage failures return JSON and stderr without a stack trace',async()=>{
-  const result=await new Promise((resolve,reject)=>{
-    const child=spawn(process.execPath,['bin/linebridge.mjs','send','--text','synthetic'],{windowsHide:true,env:{...process.env,LINE_BRIDGE_TOKEN:token},stdio:['pipe','pipe','pipe']});
-    let stdout='',stderr='';child.stdout.on('data',b=>{stdout+=b;});child.stderr.on('data',b=>{stderr+=b;});child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));child.stdin.end();
-  });
-  assert.equal(result.code,2);assert.equal(JSON.parse(result.stdout).error,'invalid_input');assert.match(result.stderr,/--account/);assert.ok(!result.stderr.includes(' at '));
+  for(const args of [['send','--text','synthetic'],['send-image','--file','missing.png']]){
+    const result=await new Promise((resolve,reject)=>{
+      const child=spawn(process.execPath,['bin/linebridge.mjs',...args],{windowsHide:true,env:{...process.env,LINE_BRIDGE_TOKEN:token},stdio:['pipe','pipe','pipe']});
+      let stdout='',stderr='';child.stdout.on('data',b=>{stdout+=b;});child.stderr.on('data',b=>{stderr+=b;});child.on('error',reject);child.on('close',code=>resolve({code,stdout,stderr}));child.stdin.end();
+    });
+    assert.equal(result.code,2,args.join(' '));assert.equal(JSON.parse(result.stdout).error,'invalid_input');assert.match(result.stderr,/--account/);assert.ok(!result.stderr.includes(' at '));
+  }
 });

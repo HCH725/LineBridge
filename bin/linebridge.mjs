@@ -9,7 +9,7 @@ import {VERSION} from '../server/version.mjs';
 const help=`LineBridge ${VERSION} — local LINE MCP / HTTP gateway
 
 Usage: linebridge [serve|tray|status|stop|shutdown] [options]
-       linebridge discover|version|accounts|chats|read|refresh|search|events|send|send-flex|media|auth [options]
+       linebridge discover|version|accounts|chats|read|refresh|search|events|send|send-image|send-flex|media|auth [options]
        linebridge codex preview|install|uninstall|verify [options]
        linebridge mcp --profile NAME --url GATEWAY [--tools read|read-send]
 
@@ -101,7 +101,7 @@ if(!['win32','darwin'].includes(process.platform)) {
   const {runCodex}=await import('../client/codex.mjs');process.exitCode=await runCodex(process.argv.slice(3));
 } else if(process.argv[2]==='mcp') {
   const {runMcp}=await import('../client/mcp.mjs');process.exitCode=await runMcp(process.argv.slice(3));
-} else if(['discover','version','accounts','chats','read','refresh','search','events','send','send-flex','media','auth'].includes(process.argv[2])) {
+} else if(['discover','version','accounts','chats','read','refresh','search','events','send','send-image','send-flex','media','auth'].includes(process.argv[2])) {
   const {runCli}=await import('../client/cli.mjs');process.exitCode=await runCli(process.argv.slice(2));
 } else {
   try{await main();}catch(error){console.error(error?.code==='EADDRINUSE'?`Port ${error.port??'requested'} is already in use. Check linebridge status. Choose free --admin-port and --gateway-port values; also leave gateway + 1 free for connector health. No ports were changed automatically.`:error?.status?`${error.code}: ${error.message}`:error.message??'LineBridge could not complete the command.');process.exitCode=1;}
