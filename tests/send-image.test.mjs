@@ -45,6 +45,20 @@ test('image sending is limited to authorized direct chats, deduplicates and reta
   assert.equal(calls,2);assert.equal(store.send(localActor.id,'image-key-03').state,'unknown');
   assert.ok(!JSON.stringify(store.audits()).includes(png.toString('base64')));
 });
+test('one permanent local token can send an image separately to multiple approved direct friends',async t=>{
+  const {hub,account}=await fixture(t);
+  for(const id of ['u-friend-2','u-unapproved'])hub.addChat(account.id,{id,name:id,kind:'direct'});
+  hub.designate(account.id,'u-friend-2',true);
+  hub.designate(account.id,'u-unapproved',true);
+  const grant={accountId:account.id,read:true,send:true,localOnly:true,chatIds:['u-friend','u-friend-2']};
+  const token=hub.createToken({name:'Local multi friend',neverExpires:true,grants:[grant]});
+  const actor=hub.authenticate(token.token),sent=[];
+  hub.driver(account.id).sendImage=async(chat,_image,check)=>{check();sent.push(chat.id);return {messageId:'accepted-'+chat.id,delivery:'accepted_by_line'};};
+  for(const id of grant.chatIds)assert.equal((await hub.sendImage(actor,account.id,id,png,'image-'+id)).messageId,'accepted-'+id);
+  await assert.rejects(hub.sendImage(actor,account.id,'u-unapproved',png,'image-unapproved'),{code:'scope_denied'});
+  await assert.rejects(hub.sendImage(actor,account.id,'demo-group',png,'image-group'),{code:'scope_denied'});
+  assert.deepEqual(sent,grant.chatIds);
+});
 test('pinned SDK image upload uses encrypted chunks and rechecks scope only at send RPC',async t=>{
   const d=new LineDriver({device:'IOSIPAD'},{},{qr(){},pin(){},fault(){}});t.after(()=>d.stop());
   let uploads=0,rpc=0,authorized=0;

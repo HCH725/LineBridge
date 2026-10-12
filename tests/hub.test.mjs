@@ -65,33 +65,42 @@ test('token revocation, expiry, global pause and chat removal take effect on exi
   assert.throws(()=>hub.authenticate(expired.token),{code:'invalid_token'});
   assert.throws(()=>hub.authenticate('wrong'),{code:'unauthorized'});
 });
-test('permanent tokens are local-only, single-account, single-approved-direct-chat, revocable and backward compatible',async t=>{
+test('permanent tokens support multiple explicitly approved direct friends while retaining local-only scope and revocation',async t=>{
   const {hub,store,account}=await setup(t);
-  const friend='u'+'a'.repeat(32),second='u'+'b'.repeat(32);
-  store.putChat(account.id,{id:friend,name:'approved friend',kind:'direct'});
-  store.putChat(account.id,{id:second,name:'another friend',kind:'direct'});
+  const friend='u'+'a'.repeat(32),second='u'+'b'.repeat(32),third='u'+'c'.repeat(32);
+  for(const id of [friend,second,third])store.putChat(account.id,{id,name:id,kind:'direct'});
   hub.designate(account.id,friend,true);
+  hub.designate(account.id,second,true);
   hub.designate(account.id,'demo-group',true);
   const grant={accountId:account.id,read:true,send:true,localOnly:true,chatIds:[friend]};
   const finite=hub.createToken({name:'Normal 90-day token',days:90,grants:[{accountId:account.id,read:true,send:false}]});
   assert.ok(Date.parse(finite.expires_at)>Date.now());
   assert.ok(Date.parse(finite.expires_at)<Date.now()+91*86400000);
-  const perpetual=hub.createToken({name:'Local Hermes token',neverExpires:true,grants:[grant]});
+  const existing=hub.createToken({name:'Existing single-friend token',neverExpires:true,grants:[grant]});
+  assert.deepEqual(hub.chats(hub.authenticate(existing.token),account.id).map(c=>c.id),[friend]);
+  const perpetual=hub.createToken({name:'Local Hermes multi-friend token',neverExpires:true,grants:[{...grant,chatIds:[friend,second]}]});
   assert.equal(perpetual.expires_at,'9999-12-31T23:59:59.999Z');
   assert.equal(hub.authenticate(perpetual.token).localOnly,true);
-  assert.deepEqual(hub.chats(hub.authenticate(perpetual.token),account.id).map(c=>c.id),[friend]);
-  hub.designate(account.id,second,true);
-  assert.deepEqual(hub.chats(hub.authenticate(perpetual.token),account.id).map(c=>c.id),[friend]);
+  assert.deepEqual(hub.chats(hub.authenticate(perpetual.token),account.id).map(c=>c.id),[friend,second]);
+  hub.designate(account.id,third,true);
+  assert.deepEqual(hub.chats(hub.authenticate(perpetual.token),account.id).map(c=>c.id),[friend,second]);
+  assert.deepEqual(hub.chats(hub.authenticate(existing.token),account.id).map(c=>c.id),[friend]);
+  await assert.rejects(hub.send(hub.authenticate(perpetual.token),account.id,third,'not authorized','not-authorized-003'),{code:'scope_denied'});
+  for(const id of [friend,second])assert.equal((await hub.send(hub.authenticate(perpetual.token),account.id,id,'test text',`allowed-${id}`)).delivery,'sandbox_only');
   for(const bad of [
     {days:90,neverExpires:true,grants:[grant]},
     {neverExpires:true,grants:[{...grant,localOnly:undefined}]},
     {neverExpires:true,grants:[{accountId:account.id,read:true,send:true,localOnly:true}]},
-    {neverExpires:true,grants:[{...grant,chatIds:[friend,second]}]},
+    {neverExpires:true,grants:[{...grant,chatIds:[]}]},
+    {neverExpires:true,grants:[{...grant,chatIds:[friend,friend]}]},
     {neverExpires:true,grants:[{...grant,chatIds:['demo-group']}]},
-    {neverExpires:true,grants:[{...grant,chatIds:['u'+'c'.repeat(32)]}]}
+    {neverExpires:true,grants:[{...grant,chatIds:[friend,'demo-group']}]},
+    {neverExpires:true,grants:[{...grant,chatIds:['u'+'d'.repeat(32)]}]}
   ])assert.throws(()=>hub.createToken({name:'invalid',...bad}));
   assert.ok(!JSON.stringify(hub.tokens()).includes(perpetual.token),'Never expose token in metadata');
-  store.setTokenGrants(perpetual.id,[{accountId:account.id,read:true,send:true,chatIds:[friend]}]);
+  store.setTokenGrants(perpetual.id,[{accountId:account.id,read:true,send:true,localOnly:true,chatIds:[friend,'demo-group']}]);
+  assert.throws(()=>hub.authenticate(perpetual.token),{code:'invalid_token'});
+  store.setTokenGrants(perpetual.id,[{accountId:account.id,read:true,send:true,localOnly:true}]);
   assert.throws(()=>hub.authenticate(perpetual.token),{code:'invalid_token'});
   const replacement=hub.createToken({name:'Revocable local',neverExpires:true,grants:[grant]});
   store.revoke(replacement.id);

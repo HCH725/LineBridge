@@ -65,8 +65,9 @@ export class Hub {
     const token=this.store.token(actor.id);
     if(!token || token.revoked || Date.parse(token.expires_at)<=Date.now()) fail(401,'invalid_token','The access token is expired or revoked.');
     const perpetual=token.expires_at===PERPETUAL_TOKEN_EXPIRY;
-    // Fail closed if a permanent token's local, single-chat scope was changed.
-    if(perpetual && (token.grants.length!==1 || token.grants[0].localOnly!==true || token.grants[0].chatIds?.length!==1))fail(401,'invalid_token','A permanent token requires its original local-only, single-chat scope.');
+    // Permanent tokens must retain a bounded explicit local-only direct-chat allowlist.
+    const grant=token.grants[0];
+    if(perpetual && (token.grants.length!==1 || grant.localOnly!==true || !Array.isArray(grant.chatIds) || !grant.chatIds.length || grant.chatIds.length>1000 || new Set(grant.chatIds).size!==grant.chatIds.length || grant.chatIds.some(id=>this.store.chat(grant.accountId,id)?.kind!=='direct')))fail(401,'invalid_token','A permanent token requires a local-only account with an explicit direct-friend allowlist.');
     return {id:token.id,grants:token.grants,...(perpetual||token.grants.some(g=>g.localOnly)?{localOnly:true}:{})};
   }
   authenticate(token) {
@@ -372,7 +373,7 @@ export class Hub {
   }
   createToken(input) {
     const data=tokenInput.parse(input),perpetual=data.neverExpires===true;
-    if(perpetual&&(input.days!==undefined||data.grants.length!==1||data.grants[0].localOnly!==true||data.grants[0].chatIds?.length!==1))fail(400,'permanent_token_scope','Permanent tokens require one local-only account and one explicit chat, without a days value.');
+    if(perpetual&&(input.days!==undefined||data.grants.length!==1||data.grants[0].localOnly!==true||!data.grants[0].chatIds?.length))fail(400,'permanent_token_scope','Permanent tokens require one local-only account and one or more explicitly approved direct friends, without a days value.');
     if(new Set(data.grants.map(g=>g.accountId)).size!==data.grants.length)fail(400,'duplicate_grant','Choose each account once.');
     for(const g of data.grants) {this.record(g.accountId);if(!g.read&&!g.send)fail(400,'empty_grant','Choose read or send for each account.');if(g.chatIds){if(new Set(g.chatIds).size!==g.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');for(const id of g.chatIds){const chat=this.authorize(adminActor,g.accountId,null,id);if(perpetual&&(!chat.enabled||chat.kind!=='direct'))fail(400,'permanent_token_scope','The permanent token chat must be an approved one-to-one friend.');}}}
     const token=`lb_${randomBytes(32).toString('base64url')}`,record=this.store.addToken(data.name,digest(token),data.grants,data.days??7,perpetual);
