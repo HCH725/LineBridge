@@ -13,16 +13,24 @@ import {Vault} from '../server/vault.mjs';
 import {Store} from '../server/store.mjs';
 const exec=promisify(execFile),cli=resolve('bin/linebridge.mjs'),tray=resolve('server/tray.mjs');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
-async function ports(){
+async function ports(holdGatewayGuard=false){
   for(;;){
-    const servers=[];
+    const servers=[];let guard=null;
     try{
-      const bind=async port=>{const s=createServer();servers.push(s);await new Promise((ok,fail)=>{s.once('error',fail);s.listen(port,'127.0.0.1',ok);});return s.address().port;};
-      const admin=await bind(0),gateway=await bind(0);if(gateway>=65535)continue;await bind(gateway+1);return {admin,gateway};
-    }catch{}finally{await Promise.all(servers.filter(s=>s.listening).map(s=>new Promise(r=>s.close(r))));}
+      const bind=async port=>{const s=createServer();servers.push(s);await new Promise((ok,fail)=>{s.once('error',fail);s.listen(port,'127.0.0.1',ok);});return s;};
+      const admin=await bind(0),gateway=await bind(0);
+      const adminPort=admin.address().port,gatewayPort=gateway.address().port;
+      if(gatewayPort>=65535)continue;guard=await bind(gatewayPort+1);
+      // The shutdown loop refuses to finish while admin/gateway/gateway+1 are not all
+      // released. Keep the gateway+1 probe in the very bind that proves it free (or
+      // release it immediately): a busy-port scenario re-listens on a port that
+      // concurrent fixtures can otherwise steal between the probe and the later listen.
+      if(!holdGatewayGuard){await new Promise(r=>guard.close(r));guard=null;}
+      return {admin:adminPort,gateway:gatewayPort,guard};
+    }catch(error){if(error?.code!=='EADDRINUSE')throw error;}finally{await Promise.all(servers.filter(s=>s.listening&&s!==guard).map(s=>new Promise(r=>s.close(r))));}
   }
 }
-async function fixture(t){
+async function fixture(t,{holdGatewayGuard=false}={}){
   const directory=await mkdtemp(join(tmpdir(),'linebridge-maintenance-')),data=await realpath(directory),children=[];
   // Metadata uses the service's canonical path, including Windows short TEMP paths.
   // Explicit synthetic host model for Linux: exercise JS lifecycle/IPC and
@@ -30,7 +38,7 @@ async function fixture(t){
   const preload=join(data,'synthetic-host.mjs');
   await writeFile(preload,"if(process.platform==='linux')Object.defineProperty(process,'platform',{value:'darwin'});");
   const env={...process.env,NODE_OPTIONS:`--import=${pathToFileURL(preload).href}`,LINE_BRIDGE_DATA:data};
-  const p=await ports();
+  const p=await ports(holdGatewayGuard);
   function start(file,args=[]){
     const child=spawn(process.execPath,[file,...args],{env,stdio:['pipe','pipe','pipe'],windowsHide:true});children.push(child);
     let output='';child.stdout.on('data',b=>output+=b);child.stderr.on('data',b=>output+=b);
@@ -43,6 +51,7 @@ async function fixture(t){
     // Only the service whose instance metadata lives in this disposable fixture.
     try{const m=JSON.parse(await readFile(join(data,'service.json'),'utf8'));if(m.dataDir===data&&m.pid!==process.pid)process.kill(m.pid);}catch{}
     await pause(80);await removeClientFixture(directory);
+    if(p.guard?.listening)await new Promise(r=>p.guard.close(r));
   });
   return {data,p,env,start,run,serve:(...flags)=>start(cli,['serve','--data-dir',data,'--admin-port',String(p.admin),'--gateway-port',String(p.gateway),'--trust-local',...flags])};
 }
@@ -156,8 +165,8 @@ test('missing data and held unidentified service locks fail closed, without enro
 });
 
 test('concurrent shutdowns share maintenance and wait for a busy reserved port without touching its owner',async t=>{
-  const f=await fixture(t),service=f.serve();await service.until(/Dashboard:/);
-  const blocker=createServer();await new Promise(r=>blocker.listen(f.p.gateway+1,'127.0.0.1',r));
+  const f=await fixture(t,{holdGatewayGuard:true}),service=f.serve();await service.until(/Dashboard:/);
+  const blocker=f.p.guard; // Listening since fixture allocation: no probe→listen window for concurrent fixtures to race.
   try{
     const first=f.run('shutdown','--timeout-ms','1000'),second=f.run('shutdown','--timeout-ms','1000');
     await Promise.all([first,second].map(p=>assert.rejects(p,e=>/shutdown_timeout/.test(e.stderr))));
