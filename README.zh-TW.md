@@ -29,7 +29,7 @@ CLI_COMMAND chats --profile PROFILE_NAME --account ACCOUNT_ID
 CLI_COMMAND send-image --profile PROFILE_NAME --account ACCOUNT_ID --chat FRIEND_CHAT_ID --key "good-morning-YYYYMMDD-FRIEND" --file "/path/to/generated-morning.jpg"
 ```
 
-固定同一天／好友／圖片使用相同 key；遇到 `delivery_unknown` 要**停下來人工查證**，不可自動換 key 重送。設定好友 ID 前須由使用者核對，不能依聊天訊息自行擴充名單。完整指引及驗收條件見 [CLI.md：Hermes 早安圖圖片傳送](CLI.md#hermes-personal-line-morning-image-send)。
+`send-image` 預設等待 65 秒（Worker 逾時 60 秒）；仍可用 `--timeout-ms` 明確覆寫。固定同一天／好友／圖片使用相同 key；遇到 `delivery_unknown` 要**停下來人工查證**，不可自動換 key 重送。設定好友 ID 前須由使用者核對，不能依聊天訊息自行擴充名單。完整指引及驗收條件見 [CLI.md：Hermes 早安圖圖片傳送](CLI.md#hermes-personal-line-morning-image-send)。
 
 ## 更新時關閉桌面與服務
 

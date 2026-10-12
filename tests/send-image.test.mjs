@@ -88,3 +88,28 @@ test('Hermes CLI sends one validated local image as binary, never embeds file by
   const bad=await invoke(()=>assert.fail('Malformed images must never reach the gateway'));assert.equal(bad.code,2);
   assert.deepEqual(await readFile(file),Buffer.from('not an image'));
 });
+test('send-image default timeout exceeds worker deadline while ordinary sends keep 45 seconds',async t=>{
+  const dir=await mkdtemp(join(tmpdir(),'linebridge-image-timeout-'));
+  t.after(()=>rm(dir,{recursive:true,force:true}));
+  const file=join(dir,'good.png');await writeFile(file,png);
+  const observed=[];
+  const timeout=AbortSignal.timeout.bind(AbortSignal);
+  t.mock.method(AbortSignal,'timeout',ms=>{observed.push(ms);return timeout(ms);});
+  const invoke=async(args)=>{
+    let output='';
+    const code=await runCli(args,{
+      env:{LINE_BRIDGE_TOKEN:'synthetic'},stdin:Readable.from([]),
+      stdout:{write:value=>output+=value},stderr:{write(){}},
+      fetchImpl:async()=>new Response('{"messageId":"synthetic-ok"}')
+    });
+    assert.equal(code,0,output);
+    assert.equal(JSON.parse(output).messageId,'synthetic-ok');
+  };
+  const img=['send-image','--account','a','--chat','u','--file',file,'--key','good-morning-20261012-u'];
+  await invoke(img);
+  assert.equal(observed.at(-1),65000,'image default is longer than 60-second worker deadline');
+  await invoke([...img,'--timeout-ms','80000']);
+  assert.equal(observed.at(-1),80000,'explicit operator override wins');
+  await invoke(['send','--account','a','--chat','u','--key','text-timeout-001','--text','hello']);
+  assert.equal(observed.at(-1),45000,'existing text default remains unchanged');
+});

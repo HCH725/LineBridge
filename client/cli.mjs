@@ -49,6 +49,7 @@ export const HELP = `LineBridge ${VERSION} data client (Node.js 24+, Windows/mac
 
 Common: --profile NAME (default: default), --url GATEWAY, --timeout-ms 45000,
         --credential-stdin (transient JSON credentials through a private pipe).
+Send-image uses a 65000 ms default (worker deadline: 60000 ms); --timeout-ms overrides it.
 Discover uses only --data-dir and --timeout-ms. It lists existing local setup
 profiles and the running CLI paths, without credentials or changing any setup.
 Then use accounts --profile NAME and chats --profile NAME --account ACCOUNT.
@@ -152,7 +153,7 @@ async function execute(argv,context) {
   if(values.help){context.stderr.write(HELP);return {version:VERSION,commands:DATA_COMMANDS};}
   if(command==='discover')return discoverLocal({dataDir:values['data-dir'],env:context.env,timeoutMs:integer(values['timeout-ms'],7000,1,120000,'timeout-ms'),fetchImpl:context.fetchImpl});
   profileName(values.profile);
-  context.timeoutMs=integer(values['timeout-ms'],45000,1,120000,'timeout-ms');
+  context.timeoutMs=integer(values['timeout-ms'],command==='send-image'?65000:45000,1,120000,'timeout-ms');
   if(values.url!==undefined)endpoint(values.url);
   if(command==='auth') {
     if(action==='forget') {
