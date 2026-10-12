@@ -105,6 +105,8 @@ input[type=number]{font-variant-numeric:tabular-nums}
 .segmented{display:inline-flex;gap:2px;padding:3px;border-radius:11px;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--border)}
 .segmented.wide{display:flex}
 .segmented.wide label{flex:1;justify-content:center}
+.segmented.token-durations{flex-wrap:wrap}
+.segmented.token-durations label:last-child{min-width:140px}
 .segmented label{position:relative;display:flex;align-items:center;height:28px;padding:0 12px;border-radius:8px;font-size:13px;font-weight:550;color:var(--text-2);cursor:pointer;white-space:nowrap;transition:color .2s,background-color .25s,box-shadow .25s}
 .segmented label:hover{color:var(--text)}
 .segmented input{position:absolute;opacity:0;pointer-events:none}

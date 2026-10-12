@@ -419,8 +419,9 @@ $('#cancel-login').addEventListener('click',()=>action(cancelLogin));$('#close-l
 
 function renderTokens(){
   const accountLabel=id=>state.accounts.find(a=>a.id===id)?.label||'已移除帳號';
-  $('#token-list').innerHTML=state.tokens.length?state.tokens.map(t=>{const expired=Date.parse(t.expires_at)<=Date.now(),active=!t.revoked&&!expired;return `<div class="token${active?'':' inactive'}"><span class="token-icon">${icon('key')}</span><div class="token-main"><div class="token-title"><strong>${escape(t.name)}</strong>${badge(t.revoked?'已撤銷':expired?'已過期':'有效',active?'good':'')}</div><div class="token-grants">${t.grants.map(g=>`<span class="chip">${escape(accountLabel(g.accountId))} · ${[g.read?'讀取':null,g.send?'傳送':null].filter(Boolean).join(' + ')}</span>`).join('')}</div><small>到期 ${escape(short(t.expires_at))} · 上次使用 ${escape(short(t.last_used))}</small></div>${active?`<button class="btn sm danger" data-revoke="${escape(t.id)}">撤銷</button>`:''}</div>`;}).join(''):`<div class="empty compact"><span class="empty-icon">${icon('key')}</span><h3>尚無權杖</h3><p>建立權杖並啟動雲端連線，即可授權雲端 AI。</p></div>`;
+  $('#token-list').innerHTML=state.tokens.length?state.tokens.map(t=>{const perpetual=t.expires_at==='9999-12-31T23:59:59.999Z',expired=Date.parse(t.expires_at)<=Date.now(),active=!t.revoked&&!expired;return `<div class="token${active?'':' inactive'}"><span class="token-icon">${icon('key')}</span><div class="token-main"><div class="token-title"><strong>${escape(t.name)}</strong>${badge(t.revoked?'已撤銷':expired?'已過期':'有效',active?'good':'')}</div><div class="token-grants">${t.grants.map(g=>`<span class="chip">${escape(accountLabel(g.accountId))} · ${[g.read?'讀取':null,g.send?'傳送':null].filter(Boolean).join(' + ')}</span>`).join('')}</div><small>${perpetual?`永久有效 · 僅本機 · ${t.grants[0]?.chatIds?.length??0} 位指定好友`:`到期 ${escape(short(t.expires_at))}`} · 上次使用 ${escape(short(t.last_used))}</small></div>${active?`${perpetual?`<button class="btn sm" data-scope="${escape(t.id)}">編輯好友</button>`:''}<button class="btn sm danger" data-revoke="${escape(t.id)}">撤銷</button>`:''}</div>`;}).join(''):`<div class="empty compact"><span class="empty-icon">${icon('key')}</span><h3>尚無權杖</h3><p>建立權杖並啟動雲端連線，即可授權雲端 AI。</p></div>`;
   document.querySelectorAll('[data-revoke]').forEach(e=>e.addEventListener('click',()=>action(async()=>{await api(`/tokens/${e.dataset.revoke}`,{method:'DELETE'});toast('權杖已撤銷');await refresh();})));
+  document.querySelectorAll('[data-scope]').forEach(e=>e.addEventListener('click',()=>action(()=>openTokenScope(e.dataset.scope))));
 }
 let localAccessSignature;
 function renderLocalAccess(){
@@ -432,9 +433,46 @@ function renderLocalAccess(){
   $('#local-access-list').innerHTML=state.accounts.length?state.accounts.map(a=>`<div class="grant-row" data-local-account="${escape(a.id)}"><div><strong>${escape(accountName(a))}</strong><small>${a.designatedChats} 個開放聊天室${a.kind==='demo'?' · 沙盒':''}</small></div><div class="grant-options"><label class="switch-label"><input type="checkbox" class="switch" name="read" ${a.localAccess.read?'checked':''}>讀取</label><label class="switch-label"><input type="checkbox" class="switch" name="send" ${a.localAccess.send?'checked':''}>傳送</label></div></div>`).join(''):'<p class="muted">請先連接帳號並開放聊天室。</p>';
   document.querySelectorAll('[data-local-account]').forEach(row=>row.querySelectorAll('input').forEach(input=>input.addEventListener('change',()=>action(async()=>{const inputs=[...row.querySelectorAll('input')];inputs.forEach(i=>i.disabled=true);try{await api(`/accounts/${row.dataset.localAccount}/local-access`,{method:'PUT',body:JSON.stringify({read:row.querySelector('[name=read]').checked,send:row.querySelector('[name=send]').checked})});toast('已更新本機 AI 權限');}catch(error){input.checked=!input.checked;throw error;}finally{inputs.forEach(i=>i.disabled=false);await refresh();}}))));
 }
-function openToken(accountId){if(!state?.accounts.length){toast('請先新增帳號',true);return;}$('#grant-list').innerHTML=state.accounts.filter(a=>!accountId||a.id===accountId).map(a=>`<div class="grant-row" data-grant="${escape(a.id)}"><div><strong>${escape(accountName(a))}</strong><small>${a.designatedChats} 個開放聊天室${a.kind==='demo'?' · 沙盒':''}</small></div><div class="grant-options"><label class="switch-label"><input type="checkbox" class="switch" name="read">讀取</label><label class="switch-label"><input type="checkbox" class="switch" name="send">傳送</label></div></div>`).join('');$('#token-dialog').showModal();}
+function openToken(accountId){if(!state?.accounts.length){toast('請先新增帳號',true);return;}$('#token-form').reset();$('#grant-list').innerHTML=state.accounts.filter(a=>!accountId||a.id===accountId).map(a=>`<div class="grant-row" data-grant="${escape(a.id)}"><div><strong>${escape(accountName(a))}</strong><small>${a.designatedChats} 個開放聊天室${a.kind==='demo'?' · 沙盒':''}</small></div><div class="grant-options"><label class="switch-label"><input type="checkbox" class="switch" name="read">讀取</label><label class="switch-label"><input type="checkbox" class="switch" name="send">傳送</label></div></div>`).join('');$('#permanent-scope').hidden=true;$('#permanent-chat-list').replaceChildren();$('#token-dialog').showModal();}
+async function openTokenScope(id){
+  const token=state.tokens.find(t=>t.id===id);if(!token)return;
+  const accounts=state.accounts.filter(a=>a.designatedChats>0);
+  const rows=(await Promise.all(accounts.map(async a=>({account:a,chats:await api(`/accounts/${encodeURIComponent(a.id)}/chats`)})))).flatMap(({account,chats})=>chats.filter(c=>c.enabled&&c.kind==='direct').map(c=>({account,name:c.name,id:c.id})));
+  const selected=new Set(token.grants[0]?.chatIds??[]);
+  $('#token-scope-list').innerHTML=rows.length?rows.map(c=>`<label class="switch-label"><input type="checkbox" data-scope-chat value="${escape(c.id)}" ${selected.has(c.id)?'checked':''}> ${escape(accountName(c.account)+' · '+c.name)}</label>`).join(''):'<small>尚無已開放的一對一好友，請先前往「聊天室」指定。</small>';
+  $('#token-scope-form').dataset.token=id;
+  $('#token-scope-dialog').showModal();
+}
+$('#token-scope-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{
+  const id=$('#token-scope-form').dataset.token;
+  const chatIds=[...document.querySelectorAll('[data-scope-chat]:checked')].map(e=>e.value);
+  if(!chatIds.length)throw new Error('請至少選擇一位好友。');
+  await api(`/tokens/${encodeURIComponent(id)}/scope`,{method:'PUT',body:JSON.stringify({chatIds})});
+  $('#token-scope-dialog').close();toast('權杖好友名單已更新');await refresh();
+});});
+async function updatePermanentScope(){
+  const permanent=$('#token-form').elements.days.value==='never';$('#permanent-scope').hidden=!permanent;
+  if(!permanent)return;
+  const accounts=state.accounts.filter(a=>a.designatedChats>0);
+  const rows=(await Promise.all(accounts.map(async a=>({account:a,chats:await api(`/accounts/${encodeURIComponent(a.id)}/chats`)})))).flatMap(({account,chats})=>chats.filter(c=>c.enabled&&c.kind==='direct').map(c=>({account,name:c.name,id:c.id})));
+  $('#permanent-chat-list').innerHTML=rows.length?rows.map(c=>`<label class="switch-label"><input type="checkbox" data-permanent-chat data-account="${escape(c.account.id)}" value="${escape(c.id)}"> ${escape(accountName(c.account)+' · '+c.name)}</label>`).join(''):'<small>尚無已開放的一對一好友，請先前往「聊天室」指定。</small>';
+}
+$('#token-form').querySelectorAll('input[name="days"]').forEach(r=>r.addEventListener('change',()=>action(updatePermanentScope)));
+
 $('#new-token').addEventListener('click',()=>openToken());
-$('#token-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{const form=event.currentTarget,grants=[...document.querySelectorAll('[data-grant]')].map(e=>({accountId:e.dataset.grant,read:e.querySelector('[name=read]').checked,send:e.querySelector('[name=send]').checked})).filter(g=>g.read||g.send);if(!grants.length)throw new Error('請至少為一個帳號開啟讀取或傳送。');const data=await api('/tokens',{method:'POST',body:JSON.stringify({name:form.elements.name.value,days:Number(form.elements.days.value),grants})});$('#token-dialog').close();$('#token-form').reset();$('#new-secret').value=data.token;$('#secret-dialog').showModal();await refresh();});});
+$('#token-form').addEventListener('submit',event=>{event.preventDefault();action(async()=>{
+  const form=event.currentTarget,grants=[...document.querySelectorAll('[data-grant]')].map(e=>({accountId:e.dataset.grant,read:e.querySelector('[name=read]').checked,send:e.querySelector('[name=send]').checked})).filter(g=>g.read||g.send);
+  if(!grants.length)throw new Error('請至少為一個帳號開啟讀取或傳送。');
+  const permanent=form.elements.days.value==='never';
+  let input={name:form.elements.name.value,days:Number(form.elements.days.value),grants};
+  if(permanent){
+    const selected=[...document.querySelectorAll('[data-permanent-chat]:checked')];
+    if(!selected.length||grants.length!==1||selected.some(e=>e.dataset.account!==grants[0].accountId))throw new Error('永久權杖須選擇單一帳號及至少一位該帳號已開放的好友。');
+    input={name:form.elements.name.value,neverExpires:true,grants:[{...grants[0],localOnly:true,chatIds:selected.map(e=>e.value)}]};
+  }
+  const data=await api('/tokens',{method:'POST',body:JSON.stringify(input)});
+  $('#token-dialog').close();form.reset();$('#new-secret').value=data.token;$('#secret-dialog').showModal();await refresh();
+});});
 $('#copy-secret').addEventListener('click',()=>action(async()=>{try{await navigator.clipboard.writeText($('#new-secret').value);}catch{$('#new-secret').select();if(!document.execCommand('copy'))throw new Error('請選取並手動複製權杖。');}confirmButton($('#copy-secret'));}));
 const activity=createActivity({getState:()=>state,api,action,toast,refresh,escape,when,short});
 function renderAudit(){activity.render();}

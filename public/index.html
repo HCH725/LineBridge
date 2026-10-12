@@ -297,10 +297,20 @@
     <form id="token-form">
       <div class="dialog-head"><h2 id="token-dialog-title">新增 AI 權杖</h2><button type="button" class="icon-btn" data-close="token-dialog" data-icon="x" aria-label="關閉"></button></div>
       <label class="field"><span>名稱</span><input name="name" required maxlength="80" placeholder="雲端助理"></label>
-      <div class="field"><span>有效期間</span><div class="segmented wide" role="radiogroup" aria-label="有效期間"><label><input type="radio" name="days" value="1"><span>1 天</span></label><label><input type="radio" name="days" value="7" checked><span>7 天</span></label><label><input type="radio" name="days" value="30"><span>30 天</span></label><label><input type="radio" name="days" value="90"><span>90 天</span></label></div></div>
+      <div class="field"><span>有效期間</span><div class="segmented wide token-durations" role="radiogroup" aria-label="有效期間"><label><input type="radio" name="days" value="1"><span>1 天</span></label><label><input type="radio" name="days" value="7" checked><span>7 天</span></label><label><input type="radio" name="days" value="30"><span>30 天</span></label><label><input type="radio" name="days" value="90"><span>90 天</span></label><label><input type="radio" name="days" value="never"><span>永久（本機限定）</span></label></div></div>
+      <div class="field" id="permanent-scope" hidden><span>永久權杖的指定好友（可多選，限一對一）</span><div id="permanent-chat-list" class="grant-list" role="group" aria-label="永久權杖指定好友"></div><small>先在「聊天室」開放要授權的好友，再逐一勾選。只有勾選的好友可被存取；權杖可隨時撤銷。</small></div>
       <div class="field"><span>帳號權限</span><div class="grant-list" id="grant-list"></div></div>
       <p class="dialog-note">只能存取已開放給 AI 的聊天室。</p>
       <button class="btn primary full" type="submit">建立權杖</button>
+    </form>
+  </dialog>
+
+  <dialog id="token-scope-dialog" aria-labelledby="token-scope-title">
+    <form id="token-scope-form">
+      <div class="dialog-head"><h2 id="token-scope-title">編輯永久權杖的好友名單</h2><button type="button" class="icon-btn" data-close="token-scope-dialog" data-icon="x" aria-label="關閉"></button></div>
+      <p class="dialog-note">勾選此權杖可存取的一對一好友（需先在「聊天室」開放）。變更立即生效並留下審計紀錄。</p>
+      <div id="token-scope-list" class="grant-list" role="group" aria-label="權杖好友名單"></div>
+      <button class="btn primary full" type="submit">儲存名單</button>
     </form>
   </dialog>
 

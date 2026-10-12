@@ -73,6 +73,7 @@ async function handle(request){
         case 'read':result=await driver.read(params.chat,params.limit,params.cursor);break;
         case 'media':result=await driver.media(params.chat,params.message);break;
         case 'send_flex':result=await driver.sendFlex(params.chat,params.input);break;
+        case 'send_image':result=await driver.sendImage(params.chat,params.image,()=>authorizeDispatch(id));break;
         case 'resolve_names':result=await driver.resolveMessageNames(params.chat,(params.messages ?? []).slice(0,100));break;
         case 'text_capability':result=await driver.textCapability(params.chat);break;
         case 'send':result=await driver.send(params.chat,params.text,params.options,()=>authorizeDispatch(id));break;

@@ -12,9 +12,10 @@ import {refreshIntervalSeconds,MIN_REFRESH_INTERVAL_SECONDS,MAX_REFRESH_INTERVAL
 import {DebugLogging} from './debug-logging.mjs';
 import {validateFlex,assertFlexTransport} from './flex.mjs';
 import {imageResult} from './media.mjs';
+import {PERPETUAL_TOKEN_EXPIRY} from './store.mjs';
 
 const accountInput=z.object({label:z.string().trim().min(1).max(80),kind:z.enum(['line','demo']).default('line'),device:z.enum(['IOSIPAD','DESKTOPWIN','ANDROIDSECONDARY']).default('IOSIPAD')}).strict();
-const tokenInput=z.object({name:z.string().trim().min(1).max(80),days:z.number().int().min(1).max(90).default(7),grants:z.array(z.object({accountId:z.string().min(1),read:z.boolean(),send:z.boolean(),chatIds:z.array(z.string().min(1).max(150)).min(1).max(1000).optional(),localOnly:z.literal(true).optional()}).strict()).min(1).max(30)}).strict();
+const tokenInput=z.object({name:z.string().trim().min(1).max(80),days:z.number().int().min(1).max(90).optional(),neverExpires:z.literal(true).optional(),grants:z.array(z.object({accountId:z.string().min(1),read:z.boolean(),send:z.boolean(),chatIds:z.array(z.string().min(1).max(150)).min(1).max(1000).optional(),localOnly:z.literal(true).optional()}).strict()).min(1).max(30)}).strict();
 const localAccessInput=z.object({read:z.boolean(),send:z.boolean()}).strict();
 export const adminActor={id:'local-admin',admin:true};
 export const localActor=Object.freeze({id:'local-agent',local:true});
@@ -63,7 +64,11 @@ export class Hub {
     if(actor.local===true&&actor.id===localActor.id)return {...localActor,grants:this.localGrants()};
     const token=this.store.token(actor.id);
     if(!token || token.revoked || Date.parse(token.expires_at)<=Date.now()) fail(401,'invalid_token','The access token is expired or revoked.');
-    return {id:token.id,grants:token.grants,...(token.grants.some(g=>g.localOnly)?{localOnly:true}:{})};
+    const perpetual=token.expires_at===PERPETUAL_TOKEN_EXPIRY;
+    // Permanent tokens must retain a bounded explicit local-only direct-chat allowlist.
+    const grant=token.grants[0];
+    if(perpetual && (token.grants.length!==1 || grant.localOnly!==true || !Array.isArray(grant.chatIds) || !grant.chatIds.length || grant.chatIds.length>1000 || new Set(grant.chatIds).size!==grant.chatIds.length || grant.chatIds.some(id=>this.store.chat(grant.accountId,id)?.kind!=='direct')))fail(401,'invalid_token','A permanent token requires a local-only account with an explicit direct-friend allowlist.');
+    return {id:token.id,grants:token.grants,...(perpetual||token.grants.some(g=>g.localOnly)?{localOnly:true}:{})};
   }
   authenticate(token) {
     if(typeof token!=='string' || token.length>256) fail(401,'unauthorized','A Bearer access token is required.');
@@ -312,6 +317,13 @@ export class Hub {
     const payload=validateFlex(input);assertFlexTransport(this.authorize(actor,id,'send',chatId));
     return this.send(actor,id,chatId,payload,key,'flex');
   }
+  async sendImage(actor,id,chatId,bytes,key){
+    const chat=this.authorize(actor,id,'send',chatId);
+    if(chat.kind!=='direct')fail(409,'image_direct_only','Images may only be sent to designated one-to-one chats.');
+    if(!Buffer.isBuffer(bytes))fail(415,'invalid_image','Supply binary PNG/JPEG image data.');
+    const image=imageResult(bytes);
+    return this.send(actor,id,chatId,{data:image.data,mimeType:image.mimeType,sha256:image.sha256},key,'image');
+  }
   async textCapability(actor,id,chatId){
     const chat=this.authorize(actor,id,'send',chatId),driver=this.driver(id);
     this.limit(actor,true);
@@ -322,14 +334,16 @@ export class Hub {
   async send(actor,id,chatId,text,key,kind='text',options={}) {
     this.authorize(actor,id,'send',chatId);this.limit(actor,true);
     if(options.acknowledgeOaTransport!==undefined&&typeof options.acknowledgeOaTransport!=='boolean')fail(400,'invalid_input','acknowledgeOaTransport must be a boolean.');
-    if(!['text','flex'].includes(kind))fail(400,'invalid_input','Unsupported message kind.');
+    if(!['text','flex','image'].includes(kind))fail(400,'invalid_input','Unsupported message kind.');
     if(kind==='text'&&(typeof text!=='string'||!text.trim()||text.length>5000))fail(400,'invalid_text','A text message of 1–5000 characters is required.');
     if(kind==='flex'){text=validateFlex(text);assertFlexTransport(this.authorize(actor,id,'send',chatId));}
+    if(kind==='image'&&(typeof text?.sha256!=='string'||typeof text?.data!=='string'||typeof text?.mimeType!=='string'))fail(400,'invalid_image','A validated image is required.');
     if(typeof key!=='string'||!/^[A-Za-z0-9._:-]{8,128}$/.test(key))fail(400,'idempotency_required','Supply a unique idempotency key of 8–128 letters, digits, dots, underscores, colons or hyphens.');
     return this.serialized(id,async()=>{
       const chat=this.authorize(actor,id,'send',chatId),driver=this.driver(id);
       if(kind==='flex')assertFlexTransport(chat);
-      const fingerprint=createHmac('sha256',this.vault.key).update(JSON.stringify(kind==='text'?(options.acknowledgeOaTransport===true?[id,chatId,text,'oa-transport-acknowledged']:[id,chatId,text]):[id,chatId,'flex',text])).digest('hex');
+      if(kind==='image'&&chat.kind!=='direct')fail(409,'image_direct_only','Images may only be sent to designated one-to-one chats.');
+      const fingerprint=createHmac('sha256',this.vault.key).update(JSON.stringify(kind==='text'?(options.acknowledgeOaTransport===true?[id,chatId,text,'oa-transport-acknowledged']:[id,chatId,text]):[id,chatId,kind,kind==='image'?text.sha256:text])).digest('hex');
       const previous=this.store.send(actor.id,key);
       if(previous) {
         if(previous.fingerprint!==fingerprint)fail(409,'idempotency_conflict','This key was already used for a different message.');
@@ -340,7 +354,10 @@ export class Hub {
       this.store.reserve(actor.id,key,fingerprint);
       try {
         if(kind==='flex'&&!driver.sendFlex)throw new SendRejectedError(409,'flex_transport_unverified','This adapter does not support Flex sending.');
-        const result={accountId:id,chatId,...await (kind==='flex'?driver.sendFlex(chat,text):driver.send(chat,text,options,()=>{
+        if(kind==='image'&&!driver.sendImage)throw new SendRejectedError(409,'image_transport_unavailable','This adapter does not support image sending.');
+        const result={accountId:id,chatId,...await (kind==='flex'?driver.sendFlex(chat,text):kind==='image'?driver.sendImage(chat,text,()=>{
+          try{if(this.stopping)throw new Error();this.authorize(actor,id,'send',chatId);}catch{throw new SendRejectedError(403,'send_authorization_revoked','Send permission changed or the service stopped. No image was sent.');}
+        }):driver.send(chat,text,options,()=>{
           try{if(this.stopping)throw new Error();this.authorize(actor,id,'send',chatId);}catch{throw new SendRejectedError(403,'send_authorization_revoked','Send permission changed or the service stopped during preparation. No message was sent.');}
         })),replayed:false};
         this.store.finishSend(actor.id,key,'sent',result);this.store.audit(actor.id,'messages.send',id,chatId,'ok');
@@ -355,13 +372,28 @@ export class Hub {
     });
   }
   createToken(input) {
-    const data=tokenInput.parse(input);
+    const data=tokenInput.parse(input),perpetual=data.neverExpires===true;
+    if(perpetual&&(input.days!==undefined||data.grants.length!==1||data.grants[0].localOnly!==true||!data.grants[0].chatIds?.length))fail(400,'permanent_token_scope','Permanent tokens require one local-only account and one or more explicitly approved direct friends, without a days value.');
     if(new Set(data.grants.map(g=>g.accountId)).size!==data.grants.length)fail(400,'duplicate_grant','Choose each account once.');
-    for(const g of data.grants) {this.record(g.accountId);if(!g.read&&!g.send)fail(400,'empty_grant','Choose read or send for each account.');if(g.chatIds){if(new Set(g.chatIds).size!==g.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');for(const id of g.chatIds)this.authorize(adminActor,g.accountId,null,id);}}
-    const token=`lb_${randomBytes(32).toString('base64url')}`,record=this.store.addToken(data.name,digest(token),data.grants,data.days);
+    for(const g of data.grants) {this.record(g.accountId);if(!g.read&&!g.send)fail(400,'empty_grant','Choose read or send for each account.');if(g.chatIds){if(new Set(g.chatIds).size!==g.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');for(const id of g.chatIds){const chat=this.authorize(adminActor,g.accountId,null,id);if(perpetual&&(!chat.enabled||chat.kind!=='direct'))fail(400,'permanent_token_scope','The permanent token chat must be an approved one-to-one friend.');}}}
+    const token=`lb_${randomBytes(32).toString('base64url')}`,record=this.store.addToken(data.name,digest(token),data.grants,data.days??7,perpetual);
     this.store.audit('local-admin','token.create',null,null,'ok');const {hash,...safe}=record;return {...safe,token};
   }
   tokens() {return this.store.tokens().map(({hash,...safe})=>safe);}
+  updateTokenScope(id,input) {
+    // Edit the friend allowlist of an existing local-only permanent token in
+    // place. The CLI bearer stays the same; only the gateway-side grant changes.
+    const data=z.object({chatIds:z.array(z.string().min(1).max(150)).min(1).max(1000)}).strict().parse(input);
+    const token=this.store.token(id);if(!token)fail(404,'token_not_found','Token not found.');
+    if(token.revoked)fail(409,'token_revoked','Revoked tokens cannot be edited.');
+    const grant=token.grants[0];
+    if(token.expires_at!==PERPETUAL_TOKEN_EXPIRY||token.grants.length!==1||grant.localOnly!==true)fail(409,'token_scope_fixed','Only local-only permanent tokens support scope editing.');
+    if(new Set(data.chatIds).size!==data.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');
+    for(const chatId of data.chatIds){const chat=this.authorize(adminActor,grant.accountId,null,chatId);if(!chat.enabled||chat.kind!=='direct')fail(400,'permanent_token_scope','Every chat must be an approved one-to-one friend.');}
+    this.store.setTokenGrants(id,[{...grant,chatIds:data.chatIds}]);
+    this.store.audit('local-admin','token.scope',null,null,'ok');
+    const {hash,...safe}=this.store.token(id);return safe;
+  }
   cancelHealth(r) {
     if(!r)return;
     this.cancelDiscovery(r);

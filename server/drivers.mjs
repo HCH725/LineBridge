@@ -9,7 +9,7 @@ import {mediaDescriptor,imageResult,boundedResponse,decryptAuthenticatedMedia,ME
 import {assertFlexTransport,validateFlex} from './flex.mjs';
 import {officialAccountCapability,OA_NOTICE} from './official-account.mjs';
 import {prepareText} from './send-preparation.mjs';
-import {dispatchText} from './send-dispatch.mjs';
+import {dispatchText,dispatchImage} from './send-dispatch.mjs';
 import {guardRpcTransport} from './rpc-transport.mjs';
 import {existingKeyE2EE} from './encryption-policy.mjs';
 
@@ -232,6 +232,25 @@ export class LineDriver {
     }catch(error){const code=discoveryErrorCode(error);if(error?.name==='RequestError'&&code!=='protocol_error'&&code!=='UNKNOWN')throw new SendRejectedError(502,'line_send_rejected',`LINE rejected Flex (${code}). No fallback was attempted.`);throw error;}
     if(!message?.id)fail(502,'send_unconfirmed','LINE did not return a message ID. Delivery is unknown; inspect the chat before sending again.');
     return {messageId:String(message.id),timestamp:normalizeMessage(message).timestamp,delivery:'accepted_by_line',protection:'line_transport',notice:'Flex is not Letter Sealed. Acceptance does not prove client rendering or recipient interaction.'};
+  }
+  async sendImage(chat,input,beforeDispatch=()=>{}) {
+    if(chat.kind!=='direct')throw new SendRejectedError(409,'image_direct_only','Image sending is limited to designated one-to-one friends.');
+    const image=imageResult(Buffer.from(input?.data??'','base64'));
+    if(image.sha256!==input?.sha256||image.mimeType!==input?.mimeType)fail(400,'invalid_image','Image bytes and metadata do not match.');
+    let capability;
+    try{capability=await this.monitorRequest(AbortSignal.timeout(15000),()=>officialAccountCapability(this.client,chat));}
+    catch{throw new SendRejectedError(502,'image_preparation_failed','Could not verify this is a personal chat. No image was sent.');}
+    if(capability.officialAccount)throw new SendRejectedError(409,'image_direct_only','Official Account image sending is not supported.');
+    let result;
+    try{result=await dispatchImage(this.client,chat,Buffer.from(image.data,'base64'),image.mimeType,beforeDispatch);}
+    catch(error){
+      if(error instanceof SendRejectedError)throw error;
+      const code=discoveryErrorCode(error);
+      if(error?.name==='RequestError'&&code!=='protocol_error'&&code!=='UNKNOWN')throw new SendRejectedError(502,'line_send_rejected',`LINE rejected the image (${code}). No automatic retry was attempted.`);
+      throw error;
+    }
+    if(!result?.id)fail(502,'send_unconfirmed','LINE did not return a message ID. Delivery is unknown.');
+    return {messageId:String(result.id),timestamp:normalizeMessage(result).timestamp,delivery:'accepted_by_line',protection:'letter_sealing',notice:'LINE acceptance is not confirmation that the recipient opened the image.'};
   }
   async textCapability(chat) {
     try {
