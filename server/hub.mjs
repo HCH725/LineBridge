@@ -12,9 +12,10 @@ import {refreshIntervalSeconds,MIN_REFRESH_INTERVAL_SECONDS,MAX_REFRESH_INTERVAL
 import {DebugLogging} from './debug-logging.mjs';
 import {validateFlex,assertFlexTransport} from './flex.mjs';
 import {imageResult} from './media.mjs';
+import {PERPETUAL_TOKEN_EXPIRY} from './store.mjs';
 
 const accountInput=z.object({label:z.string().trim().min(1).max(80),kind:z.enum(['line','demo']).default('line'),device:z.enum(['IOSIPAD','DESKTOPWIN','ANDROIDSECONDARY']).default('IOSIPAD')}).strict();
-const tokenInput=z.object({name:z.string().trim().min(1).max(80),days:z.number().int().min(1).max(90).default(7),grants:z.array(z.object({accountId:z.string().min(1),read:z.boolean(),send:z.boolean(),chatIds:z.array(z.string().min(1).max(150)).min(1).max(1000).optional(),localOnly:z.literal(true).optional()}).strict()).min(1).max(30)}).strict();
+const tokenInput=z.object({name:z.string().trim().min(1).max(80),days:z.number().int().min(1).max(90).optional(),neverExpires:z.literal(true).optional(),grants:z.array(z.object({accountId:z.string().min(1),read:z.boolean(),send:z.boolean(),chatIds:z.array(z.string().min(1).max(150)).min(1).max(1000).optional(),localOnly:z.literal(true).optional()}).strict()).min(1).max(30)}).strict();
 const localAccessInput=z.object({read:z.boolean(),send:z.boolean()}).strict();
 export const adminActor={id:'local-admin',admin:true};
 export const localActor=Object.freeze({id:'local-agent',local:true});
@@ -63,7 +64,10 @@ export class Hub {
     if(actor.local===true&&actor.id===localActor.id)return {...localActor,grants:this.localGrants()};
     const token=this.store.token(actor.id);
     if(!token || token.revoked || Date.parse(token.expires_at)<=Date.now()) fail(401,'invalid_token','The access token is expired or revoked.');
-    return {id:token.id,grants:token.grants,...(token.grants.some(g=>g.localOnly)?{localOnly:true}:{})};
+    const perpetual=token.expires_at===PERPETUAL_TOKEN_EXPIRY;
+    // Fail closed if a permanent token's local, single-chat scope was changed.
+    if(perpetual && (token.grants.length!==1 || token.grants[0].localOnly!==true || token.grants[0].chatIds?.length!==1))fail(401,'invalid_token','A permanent token requires its original local-only, single-chat scope.');
+    return {id:token.id,grants:token.grants,...(perpetual||token.grants.some(g=>g.localOnly)?{localOnly:true}:{})};
   }
   authenticate(token) {
     if(typeof token!=='string' || token.length>256) fail(401,'unauthorized','A Bearer access token is required.');
@@ -367,10 +371,11 @@ export class Hub {
     });
   }
   createToken(input) {
-    const data=tokenInput.parse(input);
+    const data=tokenInput.parse(input),perpetual=data.neverExpires===true;
+    if(perpetual&&(input.days!==undefined||data.grants.length!==1||data.grants[0].localOnly!==true||data.grants[0].chatIds?.length!==1))fail(400,'permanent_token_scope','Permanent tokens require one local-only account and one explicit chat, without a days value.');
     if(new Set(data.grants.map(g=>g.accountId)).size!==data.grants.length)fail(400,'duplicate_grant','Choose each account once.');
-    for(const g of data.grants) {this.record(g.accountId);if(!g.read&&!g.send)fail(400,'empty_grant','Choose read or send for each account.');if(g.chatIds){if(new Set(g.chatIds).size!==g.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');for(const id of g.chatIds)this.authorize(adminActor,g.accountId,null,id);}}
-    const token=`lb_${randomBytes(32).toString('base64url')}`,record=this.store.addToken(data.name,digest(token),data.grants,data.days);
+    for(const g of data.grants) {this.record(g.accountId);if(!g.read&&!g.send)fail(400,'empty_grant','Choose read or send for each account.');if(g.chatIds){if(new Set(g.chatIds).size!==g.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');for(const id of g.chatIds){const chat=this.authorize(adminActor,g.accountId,null,id);if(perpetual&&(!chat.enabled||chat.kind!=='direct'))fail(400,'permanent_token_scope','The permanent token chat must be an approved one-to-one friend.');}}}
+    const token=`lb_${randomBytes(32).toString('base64url')}`,record=this.store.addToken(data.name,digest(token),data.grants,data.days??7,perpetual);
     this.store.audit('local-admin','token.create',null,null,'ok');const {hash,...safe}=record;return {...safe,token};
   }
   tokens() {return this.store.tokens().map(({hash,...safe})=>safe);}

@@ -30,6 +30,10 @@ macOS 使用 `./linebridge`。`shutdown` 會驗證服務身分與實際資料目
 
 第一次從尚無 `shutdown` 的舊版升級時，仍須一次性使用舊版 `stop` 並退出舊系統匣；新 CLI 遇到不支援維護協定的舊程序會拒絕處理。維護期間不要以忽略此標記的舊版程式或外部自動重啟工具啟動。合併 PR、產生套件與實際安裝為不同步驟；Linux 合成測試不代表 Windows 原生系統匣、DPAPI 或套件安裝已驗證。
 
+## Local-only permanent AI token (fork extension)
+
+The dashboard **AI 存取 → 新增權杖** has a **永久（本機限定）** duration. Select exactly one account and one previously designated *direct* friend. The API equivalent is `POST /admin/tokens` with `name`, `neverExpires:true`, and exactly one grant `{accountId,read,send,localOnly:true,chatIds:[APPROVED_DIRECT_CHAT_ID]}`; omit `days`. The response displays the new token only once. Store it in the same OS user's protected macOS Keychain / Windows DPAPI; do not paste it into conversations or persist it in scripts. The permission is enforced as local-only at the gateway, is restricted to its original single chat, and can still be revoked. Internally, an ISO expiry in the year 9999 denotes practical indefinite validity without a SQLite migration. Existing 1–90 day tokens and the 90-day local setup wizard remain unchanged. No existing token is silently renewed or converted.
+
 ## Hermes personal LINE morning image send
 
 This fork adds **`send-image`** without changing the existing Hermes image generator, the LINE pairing flow, or normal text/Flex behavior. The intended caller is a pre-existing, explicitly authorized Hermes daily-good-morning workflow after an image has been generated successfully; this repository **does not install, activate or schedule** that workflow.

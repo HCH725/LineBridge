@@ -1,6 +1,10 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 
+// SQLite keeps a non-null ISO expiry for backward compatibility. Year 9999 is
+// reserved for explicitly local-only, permanently valid tokens.
+export const PERPETUAL_TOKEN_EXPIRY = '9999-12-31T23:59:59.999Z';
+
 export class Store {
   constructor(path) {
     this.db = new DatabaseSync(path,{timeout:5000});
@@ -41,9 +45,10 @@ export class Store {
   chat(account,id) { return this.db.prepare('SELECT * FROM chats WHERE account_id=? AND id=?').get(account,id); }
   putChat(account,chat) { this.db.prepare('INSERT INTO chats(account_id,id,name,kind) VALUES(?,?,?,?) ON CONFLICT(account_id,id) DO UPDATE SET name=excluded.name,kind=excluded.kind').run(account,chat.id,chat.name,chat.kind); }
   designate(account,id,enabled) { this.db.prepare('UPDATE chats SET enabled=? WHERE account_id=? AND id=?').run(enabled ? 1 : 0,account,id);this.setSetting(`chatScopeRevision:${account}`,this.setting(`chatScopeRevision:${account}`,0)+1); }
-  addToken(name,hash,grants,days) {
+  addToken(name,hash,grants,days,perpetual=false) {
     const id = randomUUID(), at = new Date();
-    this.db.prepare('INSERT INTO tokens(id,name,hash,grants,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(id,name,hash,JSON.stringify(grants),at.toISOString(),new Date(+at+days*86400000).toISOString());
+    const expiresAt=perpetual?PERPETUAL_TOKEN_EXPIRY:new Date(+at+days*86400000).toISOString();
+    this.db.prepare('INSERT INTO tokens(id,name,hash,grants,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(id,name,hash,JSON.stringify(grants),at.toISOString(),expiresAt);
     return this.token(id);
   }
   token(id) { const r = this.db.prepare('SELECT * FROM tokens WHERE id=?').get(id); return r && { ...r, grants: JSON.parse(r.grants) }; }
