@@ -240,3 +240,35 @@ test('the status probe reports service identity without the protected store, tun
   await (await fetch(`${base}/admin/state`,{headers:{Cookie:cookie}})).json();
   assert.ok(reads>0);assert.equal(tunnelChecks,1);assert.equal(store.audits(3000).length,audits+1);
 });
+
+test('the admin designate route toggles one chat without the managed setup lifecycle',async t=>{
+  const {store,hub,adminBase}=await localGateway(t,true);
+  const a=await hub.addAccount({label:'Designate fixture',kind:'demo'}),friend='u'+'d'.repeat(32);
+  store.putChat(a.id,{id:friend,name:'Test friend',kind:'direct'});
+  const cookie=(await fetch(adminBase)).headers.getSetCookie()[0].split(';')[0];
+  const headers={Cookie:cookie,Origin:adminBase,'X-Line-Bridge':'dashboard','Content-Type':'application/json'};
+  const route=`${adminBase}/admin/accounts/${a.id}/chats/${friend}/designate`;
+  assert.equal((await fetch(route,{method:'PUT',headers:{'Content-Type':'application/json'},body:'{"enabled":true}'})).status,401);
+  assert.equal((await fetch(route,{method:'PUT',headers:{Cookie:cookie,'Content-Type':'application/json'},body:'{"enabled":true}'})).status,403);
+  const enable=await fetch(route,{method:'PUT',headers,body:'{"enabled":true}'});
+  assert.equal(enable.status,200);assert.equal((await enable.json()).enabled,1);
+  assert.equal(store.chat(a.id,friend).enabled,1);
+  assert.ok(store.audits(3000).some(x=>x.action==='chat.designate'&&x.outcome==='enabled'));
+  assert.equal((await fetch(route,{method:'PUT',headers,body:'{"enabled":false}'})).status,200);
+  assert.equal(store.chat(a.id,friend).enabled,0);
+  assert.equal((await fetch(route,{method:'PUT',headers,body:'{"enabled":"yes"}'})).status,400);
+});
+
+test('the admin token scope route edits a permanent token friend list with the dashboard session',async t=>{
+  const {store,hub,adminBase}=await localGateway(t,true);
+  const a=await hub.addAccount({label:'Scope fixture',kind:'demo'}),friend='u'+'e'.repeat(32);
+  store.putChat(a.id,{id:friend,name:'Test friend',kind:'direct'});hub.designate(a.id,friend,true);
+  const token=hub.createToken({name:'Scope token',neverExpires:true,grants:[{accountId:a.id,read:true,send:true,localOnly:true,chatIds:[friend]}]});
+  const cookie=(await fetch(adminBase)).headers.getSetCookie()[0].split(';')[0];
+  const headers={Cookie:cookie,Origin:adminBase,'X-Line-Bridge':'dashboard','Content-Type':'application/json'};
+  const route=`${adminBase}/admin/tokens/${token.id}/scope`,body=JSON.stringify({chatIds:[friend]});
+  assert.equal((await fetch(route,{method:'PUT',headers:{'Content-Type':'application/json'},body})).status,401);
+  const ok=await fetch(route,{method:'PUT',headers,body});
+  assert.equal(ok.status,200);assert.deepEqual((await ok.json()).grants[0].chatIds,[friend]);
+  assert.equal((await fetch(`${adminBase}/admin/tokens/does-not-exist/scope`,{method:'PUT',headers,body})).status,404);
+});

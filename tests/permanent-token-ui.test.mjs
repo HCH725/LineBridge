@@ -59,3 +59,28 @@ test('permanent token UI submits all checked friends for one account, not a wild
   assert.deepEqual(Array.from(body.grants[0].chatIds),['friend-1','friend-2']);
   assert.equal(nodes['#new-secret'].value,'synthetic-token');
 });
+
+test('permanent token rows render an edit-friends button wired to the scope editor',async()=>{
+  const start=script.indexOf('function renderTokens(){');
+  const end=script.indexOf('let localAccessSignature',start);
+  assert.ok(start>=0&&end>start);
+  const nodes={'#token-list':{innerHTML:''}};
+  const tokens=[
+    {id:'perm-1',name:'Perm',expires_at:'9999-12-31T23:59:59.999Z',revoked:0,grants:[{accountId:'a',read:true,send:true,chatIds:['x','y']}],last_used:null},
+    {id:'finite-1',name:'Finite',expires_at:'2027-12-01T00:00:00.000Z',revoked:0,grants:[{accountId:'a',read:true,send:false}],last_used:null}
+  ];
+  const listeners={};
+  const context={
+    $:id=>nodes[id],
+    state:{tokens,accounts:[{id:'a',label:'Victor'}]},
+    icon:()=>'',badge:()=>'',escape:x=>String(x),short:x=>String(x),
+    document:{querySelectorAll:sel=>sel==='[data-scope]'?[{dataset:{scope:'perm-1'},addEventListener(_,fn){listeners.scope=fn;}}]:[]},
+    action:fn=>fn,api:async()=>{},toast:()=>{},refresh:async()=>{}
+  };
+  vm.runInNewContext(script.slice(start,end)+'\nrenderTokens();',context);
+  const rendered=nodes['#token-list'].innerHTML;
+  assert.match(rendered,/data-scope="perm-1"/);
+  assert.equal((rendered.match(/data-scope="/g)||[]).length,1);
+  assert.equal((rendered.match(/data-revoke="/g)||[]).length,2);
+  assert.ok(typeof listeners.scope==='function');
+});

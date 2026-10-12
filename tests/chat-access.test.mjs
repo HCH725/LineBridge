@@ -181,7 +181,12 @@ test('browser confirms exact scope, cancels without PATCH, and reconciles lost r
   calls=[];let reads=0;const states=[];
   await assert.rejects(toggleChatAccess({accountId:'a',chatId:'chat',enabled:true,confirm:()=>true,onState:s=>states.push(s),fetcher:async(url,options)=>{calls.push(options);if(options.method==='PATCH')throw Error('lost response');reads++;return {ok:true,json:async()=>({...preview,chat:{...preview.chat,enabled:reads>1}})};}}),/已重新讀取/);
   assert.equal(calls.filter(c=>c.method==='PATCH').length,1);assert.equal(states.at(-1).chat.enabled,true);
-  await assert.rejects(toggleChatAccess({accountId:'a',chatId:'chat',enabled:true,fetcher:async()=>({ok:true,json:async()=>({...preview,setupRequired:true})}),confirm:()=>{throw Error('must not confirm');}}),{code:'managed_setup_required',message:/設定精靈/});
+  // A retired/unavailable managed setup falls back to the standalone designate route.
+  let designated=0;const fallbackStates=[];
+  const fallback=await toggleChatAccess({accountId:'a',chatId:'chat',enabled:true,confirm:()=>true,onState:s=>fallbackStates.push(s),fetcher:async(url,options)=>{if(url.endsWith('/designate')){designated++;assert.equal(options.method,'PUT');return {ok:true,json:async()=>({id:'chat',enabled:1})};}return {ok:true,json:async()=>({...preview,setupRequired:true,chat:{...preview.chat,enabled:designated>0}})};}});
+  assert.equal(fallback.saved,true);assert.equal(designated,1);assert.equal(fallbackStates.at(-1).chat.enabled,true);
+  const cancelled=await toggleChatAccess({accountId:'a',chatId:'chat',enabled:true,fetcher:async()=>({ok:true,json:async()=>({...preview,setupRequired:true})}),confirm:()=>false});
+  assert.equal(cancelled.cancelled,true);assert.equal(designated,1);
   await assert.rejects(toggleChatAccess({accountId:'a',chatId:'chat',enabled:true,confirm:()=>true,fetcher:async(url,options)=>options.method==='PATCH'?{ok:false,json:async()=>({error:'manual_grant_conflict',message:'Another client would also gain access to this chat.'})}:{ok:true,json:async()=>preview}}),
     {code:'manual_grant_conflict',message:/其他 AI 用戶端.*已重新讀取/});
 });

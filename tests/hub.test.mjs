@@ -169,3 +169,23 @@ test('shutdown cancellation of a pending monitor start preserves the saved monit
   const draining=hub.drain();cancel(new Error('synthetic shutdown cancellation'));await failed;await draining;
   assert.equal(store.setting(`monitor:${account.id}`),true);
 });
+
+test('permanent token scope edits stay bounded to approved one-to-one friends',async t=>{
+  const {hub,store,account}=await setup(t);
+  const friend='u'+'a'.repeat(32),second='u'+'b'.repeat(32),outsider='u'+'c'.repeat(32);
+  for(const id of [friend,second,outsider])store.putChat(account.id,{id,name:id,kind:'direct'});
+  hub.designate(account.id,friend,true);hub.designate(account.id,second,true);
+  const token=hub.createToken({name:'Scope editor',neverExpires:true,grants:[{accountId:account.id,read:true,send:true,localOnly:true,chatIds:[friend]}]});
+  assert.deepEqual(hub.chats(hub.authenticate(token.token),account.id).map(c=>c.id),[friend]);
+  const updated=hub.updateTokenScope(token.id,{chatIds:[friend,second]});
+  assert.deepEqual(updated.grants[0].chatIds,[friend,second]);
+  assert.deepEqual(hub.chats(hub.authenticate(token.token),account.id).map(c=>c.id).sort(),[friend,second].sort());
+  assert.ok(store.audits().some(a=>a.action==='token.scope'));
+  assert.throws(()=>hub.updateTokenScope(token.id,{chatIds:[outsider]}),{code:'permanent_token_scope'});
+  assert.throws(()=>hub.updateTokenScope(token.id,{chatIds:['demo-group']}),{code:'permanent_token_scope'});
+  const finite=hub.createToken({name:'Finite token',days:7,grants:[{accountId:account.id,read:true,send:true}]});
+  assert.throws(()=>hub.updateTokenScope(finite.id,{chatIds:[friend]}),{code:'token_scope_fixed'});
+  store.revoke(token.id);
+  assert.throws(()=>hub.updateTokenScope(token.id,{chatIds:[friend]}),{code:'token_revoked'});
+  assert.throws(()=>hub.updateTokenScope('missing',{chatIds:[friend]}),{code:'token_not_found'});
+});

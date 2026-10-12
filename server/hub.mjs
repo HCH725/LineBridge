@@ -380,6 +380,20 @@ export class Hub {
     this.store.audit('local-admin','token.create',null,null,'ok');const {hash,...safe}=record;return {...safe,token};
   }
   tokens() {return this.store.tokens().map(({hash,...safe})=>safe);}
+  updateTokenScope(id,input) {
+    // Edit the friend allowlist of an existing local-only permanent token in
+    // place. The CLI bearer stays the same; only the gateway-side grant changes.
+    const data=z.object({chatIds:z.array(z.string().min(1).max(150)).min(1).max(1000)}).strict().parse(input);
+    const token=this.store.token(id);if(!token)fail(404,'token_not_found','Token not found.');
+    if(token.revoked)fail(409,'token_revoked','Revoked tokens cannot be edited.');
+    const grant=token.grants[0];
+    if(token.expires_at!==PERPETUAL_TOKEN_EXPIRY||token.grants.length!==1||grant.localOnly!==true)fail(409,'token_scope_fixed','Only local-only permanent tokens support scope editing.');
+    if(new Set(data.chatIds).size!==data.chatIds.length)fail(400,'duplicate_chat','Choose each chat once.');
+    for(const chatId of data.chatIds){const chat=this.authorize(adminActor,grant.accountId,null,chatId);if(!chat.enabled||chat.kind!=='direct')fail(400,'permanent_token_scope','Every chat must be an approved one-to-one friend.');}
+    this.store.setTokenGrants(id,[{...grant,chatIds:data.chatIds}]);
+    this.store.audit('local-admin','token.scope',null,null,'ok');
+    const {hash,...safe}=this.store.token(id);return safe;
+  }
   cancelHealth(r) {
     if(!r)return;
     this.cancelDiscovery(r);

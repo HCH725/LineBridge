@@ -103,10 +103,15 @@ export function createApps({hub,tunnels,root,adminPort=3210,gatewayPort=3211,clo
     const controller=new AbortController(),cancel=()=>{if(!res.writableEnded)controller.abort();};res.once('close',cancel);
     try{res.json(await chatAccess.apply(req.params.id,req.params.chatId,req.body,{signal:controller.signal}));}finally{res.off('close',cancel);}
   }));
+  // Designate/un-designate one chat independent of the managed setup lifecycle
+  // (the dashboard chat toggle is otherwise bound to Local AI setup). Shares the
+  // chat.designate audit trail and refreshes monitoring like the internal helper.
+  admin.put('/admin/accounts/:id/chats/:chatId/designate',(req,res)=>{hub.designate(req.params.id,req.params.chatId,req.body.enabled);res.json(hub.store.chat(req.params.id,req.params.chatId));});
   admin.get('/admin/accounts/:id/chats/:chatId/messages',asyncRoute(async(req,res)=>res.json(await hub.read(adminActor,req.params.id,req.params.chatId,Number(req.query.limit ?? 30),req.query.cursor,freshQuery(req)))));
   admin.get('/admin/accounts/:id/chats/:chatId/text-capability',asyncRoute(async(req,res)=>res.json(await hub.textCapability(adminActor,req.params.id,req.params.chatId))));
   admin.post('/admin/accounts/:id/chats/:chatId/messages',asyncRoute(async(req,res)=>res.json(await hub.send(adminActor,req.params.id,req.params.chatId,req.body.text,req.body.idempotencyKey,'text',{acknowledgeOaTransport:req.body.acknowledgeOaTransport}))));
   admin.post('/admin/tokens',(req,res)=>res.status(201).json(hub.createToken(req.body)));
+  admin.put('/admin/tokens/:id/scope',(req,res)=>res.json(hub.updateTokenScope(req.params.id,req.body)));
   admin.delete('/admin/tokens/:id',(req,res)=>{hub.store.revoke(req.params.id);hub.store.audit('local-admin','token.revoke',null,null,'ok');res.json({ok:true});});
   admin.put('/admin/tunnel',(req,res)=>res.json(tunnels.configure(req.body)));
   admin.post('/admin/tunnel/start',asyncRoute(async(req,res)=>res.json(await tunnels.start(req.body.connectorToken))));

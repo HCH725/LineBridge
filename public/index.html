@@ -305,6 +305,15 @@
     </form>
   </dialog>
 
+  <dialog id="token-scope-dialog" aria-labelledby="token-scope-title">
+    <form id="token-scope-form">
+      <div class="dialog-head"><h2 id="token-scope-title">編輯永久權杖的好友名單</h2><button type="button" class="icon-btn" data-close="token-scope-dialog" data-icon="x" aria-label="關閉"></button></div>
+      <p class="dialog-note">勾選此權杖可存取的一對一好友（需先在「聊天室」開放）。變更立即生效並留下審計紀錄。</p>
+      <div id="token-scope-list" class="grant-list" role="group" aria-label="權杖好友名單"></div>
+      <button class="btn primary full" type="submit">儲存名單</button>
+    </form>
+  </dialog>
+
   <dialog id="secret-dialog" aria-labelledby="secret-dialog-title">
     <div class="dialog-head"><h2 id="secret-dialog-title">權杖已建立</h2><button type="button" class="icon-btn" data-close="secret-dialog" data-icon="x" aria-label="關閉"></button></div>
     <p class="note warn" data-icon="alert">只會顯示這一次，請立即複製。</p>
