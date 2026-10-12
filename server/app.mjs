@@ -169,6 +169,7 @@ export function createApps({hub,tunnels,root,adminPort=3210,gatewayPort=3211,clo
   gateway.post('/api/v1/messages/search',(req,res)=>res.json(hub.search(req.actor,req.body)));
   gateway.get('/api/v1/accounts/:id/chats/:chatId/messages',asyncRoute(async(req,res)=>res.json(await hub.read(req.actor,req.params.id,req.params.chatId,Number(req.query.limit ?? 30),req.query.cursor,freshQuery(req)))));
   gateway.post('/api/v1/accounts/:id/chats/:chatId/messages',asyncRoute(async(req,res)=>res.json(await hub.send(req.actor,req.params.id,req.params.chatId,req.body.text,req.headers['idempotency-key'],'text',{acknowledgeOaTransport:req.body.acknowledgeOaTransport}))));
+  gateway.post('/api/v1/accounts/:id/chats/:chatId/image',express.raw({type:['image/png','image/jpeg'],limit:'1mb'}),asyncRoute(async(req,res)=>res.json(await hub.sendImage(req.actor,req.params.id,req.params.chatId,req.body,req.headers['idempotency-key']))));
   gateway.get('/openapi.json',(req,res)=>res.json(openapi));
   gateway.get('/api/v1/accounts/:id/chats/:chatId/messages/:messageId/media',asyncRoute(async(req,res)=>{res.set('Cache-Control','no-store');res.json(await hub.media(req.actor,req.params.id,req.params.chatId,req.params.messageId));}));
   gateway.post('/api/v1/accounts/:id/chats/:chatId/flex',asyncRoute(async(req,res)=>res.json(await hub.sendFlex(req.actor,req.params.id,req.params.chatId,req.body,req.headers['idempotency-key']))));

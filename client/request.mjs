@@ -28,18 +28,18 @@ function remoteError(status,body) {
   const exitCode = [401,403].includes(status) ? EXIT.denied : status===429 || status>=500 ? EXIT.unavailable : EXIT.remote;
   return new ClientError(code,errors[code] || 'The gateway rejected the request. Check its status and configuration.',exitCode,status);
 }
-export async function gatewayRequest({url,credentials,path,method='GET',body,key,timeoutMs=45000,send=false,fetchImpl=fetch}) {
+export async function gatewayRequest({url,credentials,path,method='GET',body,contentType,key,timeoutMs=45000,send=false,fetchImpl=fetch}) {
   const headers = {Accept:'application/json',Authorization:`Bearer ${credentials.token}`};
   if(credentials.cfAccessClientId) {
     headers['CF-Access-Client-Id']=credentials.cfAccessClientId;
     headers['CF-Access-Client-Secret']=credentials.cfAccessClientSecret;
   }
-  if(body!==undefined) headers['Content-Type']='application/json';
+  if(body!==undefined) headers['Content-Type']=contentType??'application/json';
   if(key)headers['Idempotency-Key']=key;
   let response, result;
   try {
     // One fetch only, no redirects or retries; the deadline covers the body too.
-    response = await fetchImpl(`${url}${path}`,{method,headers,redirect:'error',signal:AbortSignal.timeout(timeoutMs),...(body===undefined?{}:{body:JSON.stringify(body)})});
+    response = await fetchImpl(`${url}${path}`,{method,headers,redirect:'error',signal:AbortSignal.timeout(timeoutMs),...(body===undefined?{}:{body:Buffer.isBuffer(body)?body:JSON.stringify(body)})});
     const reader=response.body?.getReader();
     if(!reader)throw new Error('Missing response');
     const chunks=[];let size=0;

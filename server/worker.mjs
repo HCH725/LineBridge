@@ -53,7 +53,7 @@ export class ProtocolWorker {
       let ok=false;
       // Bind authorization to a still-pending send; expired/cancelled operations
       // cannot dispatch later. The callback rechecks current parent-owned scope.
-      if(request?.method==='send'&&request.beforeDispatch){try{request.beforeDispatch();ok=true;}catch{}}
+      if(['send','send_image'].includes(request?.method)&&request.beforeDispatch){try{request.beforeDispatch();ok=true;}catch{}}
       this.write({type:'authorize_send_ack',id:message.id,ok});
     }else if(message.type==='event'){
       const emit=this.events.get(message.accountId);if(message.event==='monitor_status')emit?.monitor?.(message.value);else emit?.[message.event]?.(message.value);
@@ -99,6 +99,7 @@ export class ProtocolWorker {
       read:(chat,limit,cursor)=>call('read',{chat,limit,cursor}),
       media:(chat,message)=>call('media',{chat,message}),
       sendFlex:(chat,input)=>call('send_flex',{chat,input}),
+      sendImage:(chat,image,beforeDispatch)=>worker.call('send_image',{accountId:id,chat,image},60000,undefined,beforeDispatch),
       textCapability:chat=>call('text_capability',{chat}),
       send:(chat,text,options,beforeDispatch)=>worker.call('send',{accountId:id,chat,text,options},40000,undefined,beforeDispatch),
       resolveMessageNames:(chat,messages)=>call('resolve_names',{chat,messages}),

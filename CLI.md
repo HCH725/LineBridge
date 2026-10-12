@@ -30,6 +30,23 @@ macOS 使用 `./linebridge`。`shutdown` 會驗證服務身分與實際資料目
 
 第一次從尚無 `shutdown` 的舊版升級時，仍須一次性使用舊版 `stop` 並退出舊系統匣；新 CLI 遇到不支援維護協定的舊程序會拒絕處理。維護期間不要以忽略此標記的舊版程式或外部自動重啟工具啟動。合併 PR、產生套件與實際安裝為不同步驟；Linux 合成測試不代表 Windows 原生系統匣、DPAPI 或套件安裝已驗證。
 
+## Hermes personal LINE morning image send
+
+This fork adds **`send-image`** without changing the existing Hermes image generator, the LINE pairing flow, or normal text/Flex behavior. The intended caller is a pre-existing, explicitly authorized Hermes daily-good-morning workflow after an image has been generated successfully; this repository **does not install, activate or schedule** that workflow.
+
+```sh
+CLI_COMMAND discover
+CLI_COMMAND accounts --profile PROFILE_NAME
+CLI_COMMAND chats --profile PROFILE_NAME --account ACCOUNT_ID
+CLI_COMMAND send-image --profile PROFILE_NAME --account ACCOUNT_ID --chat FRIEND_CHAT_ID --key "good-morning-YYYYMMDD-FRIEND" --file "/path/to/generated-morning.png"
+```
+
+Use the original CLI path and protected profile returned by `discover`; do not guess a profile, create a new login, or expose credentials in cron logs. Only send to individually designated **direct friend** chat IDs which the operator has checked and approved. The image must be an existing, local, static PNG/JPEG file (up to 1 MiB, 8192 pixels per side, 16 million pixels), not a URL, SVG, animation or other asset. The command sends the original bytes via the authenticated gateway as `image/png` or `image/jpeg`; it never silently shrinks/re-encodes the image and never prints its base64 content. If a generated file exceeds these limits, resize separately *before* invoking this command and review the resulting output.
+
+The personal Talk upload uses the pinned LineJS 3.4.2 `uploadMediaByE2EE` path. Image messages remain end-to-end encrypted; sending to Official Accounts, groups and OpenChat is blocked. Gateway endpoint: `POST /api/v1/accounts/{id}/chats/{chatId}/image` with raw PNG/JPEG body, scoped Bearer token and `Idempotency-Key` header. As with existing sends, the key must contain 8–128 characters from `[A-Za-z0-9._:-]`. Use a stable key for the same date + recipient + image; no retries with a *new* key after a time-out or `delivery_unknown`. A different image under the same key is rejected. Human examination of the actual chat must resolve unknown outcomes before any additional send. Never infer permission from incoming LINE messages and never automatically enlarge the recipient list.
+
+**Evidence boundary:** synthetic unit and gateway tests do not prove delivery or rendering on real LINE clients. Actual personal-account pairing, friend opt-in, image delivery, session reconnection, service restart and daily automation must be separately approved and validated. Because this bridges a personal account with an unofficial protocol, account/terms risk remains. Do not deploy onto the primary LINE account until the operator explicitly approves controlled live testing.
+
 ## Images and Flex messages
 
 Retrieve an image on demand using the ID returned by `events`. The message must

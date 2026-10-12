@@ -74,6 +74,79 @@
         }
       }
     },
+    "/api/v1/accounts/{id}/chats/{chatId}/image": {
+      "post": {
+        "operationId": "sendImage",
+        "summary": "Send a scoped PNG/JPEG image to a designated personal LINE friend",
+        "description": "Personal direct chats only; Official Accounts, group chats and OpenChat are blocked. Uses pinned SDK encrypted media upload (Letter Sealing), not a public image URL. Requires explicit recipient authorization, existing send scope and stable Idempotency-Key. Static PNG/JPEG up to 1 MiB and 16 megapixels. No automatic retry after delivery_unknown. A message ID confirms LINE acceptance, not recipient rendering. Unverified against a live LINE account.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chatId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful result"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "403": {
+            "description": "Account or chat scope denied"
+          },
+          "409": {
+            "description": "Disconnected account, conflicting key or unknown send outcome"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          },
+          "502": {
+            "description": "Upstream error or unknown delivery"
+          }
+        }
+      }
+    },
     "/api/v1/accounts/{id}/chats/{chatId}/flex": {
       "post": {
         "operationId": "sendFlex",

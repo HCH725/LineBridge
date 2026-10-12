@@ -35,6 +35,20 @@ async function ledgerFixture(t,timeout=1000){
   return {...f,fixture:f,hub,store,worker,account,get sends(){return sends;}};
 }
 
+test('image sending rechecks authorization at the worker send RPC and declines revoked grants',async t=>{
+  const worker=new ProtocolWorker(null,null,null),f=childFixture(t,worker);
+  let checked=0;
+  const accepted=worker.call('send_image',{accountId:'synthetic',image:{data:'synthetic'}},1000,undefined,()=>{checked++;});
+  const first=f.writes[0];assert.equal(first.method,'send_image');
+  f.output({type:'authorize_send',id:first.id});assert.equal(f.writes.at(-1).type,'authorize_send_ack');assert.equal(f.writes.at(-1).ok,true);
+  f.output({type:'result',id:first.id,result:{messageId:'synthetic-image'}});
+  assert.equal((await accepted).messageId,'synthetic-image');assert.equal(checked,1);
+  const rejected=worker.call('send_image',{accountId:'synthetic'},1000,undefined,()=>{throw new Error('revoke');});
+  const second=f.writes.find(v=>v.method==='send_image'&&v.id!==first.id);
+  f.output({type:'authorize_send',id:second.id});assert.equal(f.writes.at(-1).ok,false);
+  f.output({type:'result',id:second.id,error:{status:403,code:'send_authorization_revoked',message:'No image was sent.',rejected_send:true}});
+  await assert.rejects(rejected,{code:'send_authorization_revoked'});
+});
 test('production start retains an accepted send result delivered after exit and waits for stdout closure',async t=>{
   const f=await ledgerFixture(t),key='late-stdout-send';
   const sent=f.hub.send(adminActor,f.account.id,'demo-group','synthetic',key);void sent.catch(()=>{});await flush();

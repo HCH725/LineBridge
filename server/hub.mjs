@@ -312,6 +312,13 @@ export class Hub {
     const payload=validateFlex(input);assertFlexTransport(this.authorize(actor,id,'send',chatId));
     return this.send(actor,id,chatId,payload,key,'flex');
   }
+  async sendImage(actor,id,chatId,bytes,key){
+    const chat=this.authorize(actor,id,'send',chatId);
+    if(chat.kind!=='direct')fail(409,'image_direct_only','Images may only be sent to designated one-to-one chats.');
+    if(!Buffer.isBuffer(bytes))fail(415,'invalid_image','Supply binary PNG/JPEG image data.');
+    const image=imageResult(bytes);
+    return this.send(actor,id,chatId,{data:image.data,mimeType:image.mimeType,sha256:image.sha256},key,'image');
+  }
   async textCapability(actor,id,chatId){
     const chat=this.authorize(actor,id,'send',chatId),driver=this.driver(id);
     this.limit(actor,true);
@@ -322,14 +329,16 @@ export class Hub {
   async send(actor,id,chatId,text,key,kind='text',options={}) {
     this.authorize(actor,id,'send',chatId);this.limit(actor,true);
     if(options.acknowledgeOaTransport!==undefined&&typeof options.acknowledgeOaTransport!=='boolean')fail(400,'invalid_input','acknowledgeOaTransport must be a boolean.');
-    if(!['text','flex'].includes(kind))fail(400,'invalid_input','Unsupported message kind.');
+    if(!['text','flex','image'].includes(kind))fail(400,'invalid_input','Unsupported message kind.');
     if(kind==='text'&&(typeof text!=='string'||!text.trim()||text.length>5000))fail(400,'invalid_text','A text message of 1–5000 characters is required.');
     if(kind==='flex'){text=validateFlex(text);assertFlexTransport(this.authorize(actor,id,'send',chatId));}
+    if(kind==='image'&&(typeof text?.sha256!=='string'||typeof text?.data!=='string'||typeof text?.mimeType!=='string'))fail(400,'invalid_image','A validated image is required.');
     if(typeof key!=='string'||!/^[A-Za-z0-9._:-]{8,128}$/.test(key))fail(400,'idempotency_required','Supply a unique idempotency key of 8–128 letters, digits, dots, underscores, colons or hyphens.');
     return this.serialized(id,async()=>{
       const chat=this.authorize(actor,id,'send',chatId),driver=this.driver(id);
       if(kind==='flex')assertFlexTransport(chat);
-      const fingerprint=createHmac('sha256',this.vault.key).update(JSON.stringify(kind==='text'?(options.acknowledgeOaTransport===true?[id,chatId,text,'oa-transport-acknowledged']:[id,chatId,text]):[id,chatId,'flex',text])).digest('hex');
+      if(kind==='image'&&chat.kind!=='direct')fail(409,'image_direct_only','Images may only be sent to designated one-to-one chats.');
+      const fingerprint=createHmac('sha256',this.vault.key).update(JSON.stringify(kind==='text'?(options.acknowledgeOaTransport===true?[id,chatId,text,'oa-transport-acknowledged']:[id,chatId,text]):[id,chatId,kind,kind==='image'?text.sha256:text])).digest('hex');
       const previous=this.store.send(actor.id,key);
       if(previous) {
         if(previous.fingerprint!==fingerprint)fail(409,'idempotency_conflict','This key was already used for a different message.');
@@ -340,7 +349,10 @@ export class Hub {
       this.store.reserve(actor.id,key,fingerprint);
       try {
         if(kind==='flex'&&!driver.sendFlex)throw new SendRejectedError(409,'flex_transport_unverified','This adapter does not support Flex sending.');
-        const result={accountId:id,chatId,...await (kind==='flex'?driver.sendFlex(chat,text):driver.send(chat,text,options,()=>{
+        if(kind==='image'&&!driver.sendImage)throw new SendRejectedError(409,'image_transport_unavailable','This adapter does not support image sending.');
+        const result={accountId:id,chatId,...await (kind==='flex'?driver.sendFlex(chat,text):kind==='image'?driver.sendImage(chat,text,()=>{
+          try{if(this.stopping)throw new Error();this.authorize(actor,id,'send',chatId);}catch{throw new SendRejectedError(403,'send_authorization_revoked','Send permission changed or the service stopped. No image was sent.');}
+        }):driver.send(chat,text,options,()=>{
           try{if(this.stopping)throw new Error();this.authorize(actor,id,'send',chatId);}catch{throw new SendRejectedError(403,'send_authorization_revoked','Send permission changed or the service stopped during preparation. No message was sent.');}
         })),replayed:false};
         this.store.finishSend(actor.id,key,'sent',result);this.store.audit(actor.id,'messages.send',id,chatId,'ok');
